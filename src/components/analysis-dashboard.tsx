@@ -964,7 +964,6 @@ export function AnalysisDashboard() {
                       type="button"
                       onClick={() => openCategoryPicker(category.id)}
                       aria-label={`${selectionLabel} em ${category.label}`}
-                      aria-disabled={securityState !== "ready"}
                     >
                       <span className="upload-select-copy">
                         <strong>{hasDocuments ? "Clique para atualizar este grupo" : "Clique para escolher os documentos"}</strong>
