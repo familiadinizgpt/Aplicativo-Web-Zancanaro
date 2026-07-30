@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ChangeEvent, type DragEvent } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 
 import {
   calculateAllScenarios,
@@ -526,9 +526,21 @@ export function AnalysisDashboard() {
     }
   }
 
-  async function handleDrop(category: DataCategoryId, event: DragEvent<HTMLElement>) {
-    event.preventDefault();
-    await uploadFiles(category, Array.from(event.dataTransfer.files));
+  function openCategoryPicker(category: DataCategoryId) {
+    if (securityState !== "ready") {
+      const categoryLabel = DATA_CATEGORIES.find((item) => item.id === category)?.label ?? "este card";
+      if (securityState === "checking") {
+        setMessage("Aguarde a preparação do espaço privado antes de escolher arquivos.");
+      } else if (securityState === "unconfigured") {
+        setMessage("A conexão segura ainda não está configurada. Os cards serão habilitados assim que a conexão privada estiver ativa.");
+      } else {
+        setMessage(`Acesse com seu e-mail para habilitar o upload em “${categoryLabel}”.`);
+        document.getElementById("secure-access-email")?.focus();
+      }
+      return;
+    }
+
+    document.getElementById(`file-${category}`)?.click();
   }
 
   function updateBase(key: keyof FinancialBase, rawValue: string) {
@@ -875,7 +887,7 @@ export function AnalysisDashboard() {
               <div className="info-badge">Limite operacional: 25 MB por arquivo</div>
             </div>
 
-            {securityState !== "ready" ? (
+            {securityState !== "ready" && (
               <article className="panel secure-access-panel">
                 <p className="section-kicker">ACESSO E PERSISTÊNCIA</p>
                 {securityState === "unconfigured" ? (
@@ -898,96 +910,100 @@ export function AnalysisDashboard() {
                     <h3>Acesse para enviar documentos</h3>
                     <p>O link de acesso cria uma sessão vinculada ao seu e-mail. Cada arquivo ficará em bucket privado, protegido por regras de acesso.</p>
                     <div className="secure-access-form">
-                      <label className="field wide-field"><span>E-mail corporativo</span><input type="email" value={emailToSignIn} onChange={(event) => setEmailToSignIn(event.target.value)} placeholder="voce@empresa.com.br" autoComplete="email" /></label>
+                      <label className="field wide-field"><span>E-mail corporativo</span><input id="secure-access-email" type="email" value={emailToSignIn} onChange={(event) => setEmailToSignIn(event.target.value)} placeholder="voce@empresa.com.br" autoComplete="email" /></label>
                       <button className="primary-action" type="button" onClick={() => void sendMagicLink()} disabled={authState === "working"}>{authState === "working" ? "Enviando link…" : authState === "done" ? "Link enviado" : "Enviar link seguro"}</button>
                     </div>
                   </>
                 )}
               </article>
-            ) : (
-              <div className="upload-grid">
-                {DATA_CATEGORIES.map((category, index) => {
-                  const categorySources = sourcesByCategory[category.id];
-                  const pendingTasks = uploadTasksByCategory[category.id]
-                    .filter((task) => task.state !== "ready")
-                    .slice(0, 4);
-                  const categoryIsUploading = uploadState[category.id] === "working";
-                  const categoryHasError = uploadState[category.id] === "error";
-                  const hasDocuments = categorySources.length > 0;
-
-                  return (
-                    <article
-                      className={`upload-card ${categoryIsUploading ? "is-uploading" : ""} ${hasDocuments ? "has-documents" : ""} ${categoryHasError ? "has-error" : ""}`}
-                      key={category.id}
-                      onDragOver={(event) => event.preventDefault()}
-                      onDrop={(event) => void handleDrop(category.id, event)}
-                      data-testid={`upload-card-${category.id}`}
-                    >
-                      <input
-                        id={`file-${category.id}`}
-                        type="file"
-                        multiple
-                        className="sr-only"
-                        accept={sourceUploadAccepts(category.id)}
-                        onChange={(event) => void handleInputUpload(category.id, event)}
-                        data-testid={`upload-input-${category.id}`}
-                      />
-                      <div className="upload-topline">
-                        <span className="upload-index">0{index + 1}</span>
-                        <span className={`upload-state ${hasDocuments ? "is-loaded" : ""}`}>
-                          {categoryIsUploading ? "Enviando" : hasDocuments ? `${categorySources.length} arquivo${categorySources.length === 1 ? "" : "s"}` : "Aguardando"}
-                        </span>
-                      </div>
-                      <div className="upload-card-heading">
-                        <div className="upload-icon" aria-hidden="true">{category.id === "cashflow" ? "∿" : category.id === "production" ? "◌" : "＋"}</div>
-                        <div>
-                          <h3>{category.label}</h3>
-                          <p>{category.description}</p>
-                        </div>
-                      </div>
-
-                      <div className="upload-dropzone">
-                        <div>
-                          <strong>{hasDocuments ? "Atualize este grupo" : "Adicione os documentos deste grupo"}</strong>
-                          <span>Arraste aqui ou selecione vários arquivos de uma vez.</span>
-                        </div>
-                        <label className="card-upload-button" htmlFor={`file-${category.id}`}>
-                          {hasDocuments ? "Atualizar documentos" : "Selecionar documentos"}
-                        </label>
-                      </div>
-
-                      <div className="upload-card-footer">
-                        <span>{category.accepts.join(" · ")}</span>
-                        <span>até 25 MB por arquivo</span>
-                      </div>
-
-                      {(hasDocuments || pendingTasks.length > 0) && (
-                        <div className="upload-card-files" aria-live="polite">
-                          {categorySources.map((source) => (
-                            <div className="upload-card-file" key={source.id}>
-                              <span className="upload-file-glyph" aria-hidden="true">{source.extractionMethod === "structured" ? "▦" : source.extractionMethod === "ocr" ? "◫" : "▤"}</span>
-                              <div className="upload-card-file-main">
-                                <strong title={source.fileName}>{source.fileName}</strong>
-                                <small>{formatBytes(source.size)} · {extractionLabel(source)}{source.warnings.length > 0 ? " · revisar" : ""}</small>
-                              </div>
-                              <span className={`source-status ${source.status}`}>{statusLabel(source.status)}</span>
-                              <button className="source-remove" type="button" onClick={() => void removeSource(source)} aria-label={`Remover ${source.fileName}`}>Remover</button>
-                              {source.warnings.length > 0 && <p className="upload-card-warning">{source.warnings[0]}</p>}
-                            </div>
-                          ))}
-                          {pendingTasks.map((task) => (
-                            <div className={`upload-card-task ${task.state}`} key={task.id}>
-                              <span aria-hidden="true">{task.state === "error" ? "!" : "…"}</span>
-                              <div><strong>{task.fileName}</strong><small>{task.state === "uploading" ? "Enviando ao Storage privado" : task.state === "extracting" ? "Extraindo e indexando" : task.error ?? "Falhou"}</small></div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </article>
-                  );
-                })}
-              </div>
             )}
+
+            <div className={`upload-grid ${securityState !== "ready" ? "is-locked" : ""}`}>
+              {DATA_CATEGORIES.map((category, index) => {
+                const categorySources = sourcesByCategory[category.id];
+                const pendingTasks = uploadTasksByCategory[category.id]
+                  .filter((task) => task.state !== "ready")
+                  .slice(0, 4);
+                const categoryIsUploading = uploadState[category.id] === "working";
+                const categoryHasError = uploadState[category.id] === "error";
+                const hasDocuments = categorySources.length > 0;
+                const selectionLabel = hasDocuments ? "Atualizar documentos" : "Selecionar documentos";
+
+                return (
+                  <article
+                    className={`upload-card ${categoryIsUploading ? "is-uploading" : ""} ${hasDocuments ? "has-documents" : ""} ${categoryHasError ? "has-error" : ""}`}
+                    key={category.id}
+                    data-testid={`upload-card-${category.id}`}
+                  >
+                    <input
+                      id={`file-${category.id}`}
+                      type="file"
+                      multiple
+                      className="sr-only"
+                      accept={sourceUploadAccepts(category.id)}
+                      disabled={securityState !== "ready"}
+                      onChange={(event) => void handleInputUpload(category.id, event)}
+                      data-testid={`upload-input-${category.id}`}
+                    />
+                    <div className="upload-topline">
+                      <span className="upload-index">0{index + 1}</span>
+                      <span className={`upload-state ${hasDocuments ? "is-loaded" : ""}`}>
+                        {categoryIsUploading ? "Enviando" : hasDocuments ? `${categorySources.length} arquivo${categorySources.length === 1 ? "" : "s"}` : "Aguardando"}
+                      </span>
+                    </div>
+                    <div className="upload-card-heading">
+                      <div className="upload-icon" aria-hidden="true">{category.id === "cashflow" ? "∿" : category.id === "production" ? "◌" : "＋"}</div>
+                      <div>
+                        <h3>{category.label}</h3>
+                        <p>{category.description}</p>
+                      </div>
+                    </div>
+
+                    <button
+                      className="upload-select-zone"
+                      type="button"
+                      onClick={() => openCategoryPicker(category.id)}
+                      aria-label={`${selectionLabel} em ${category.label}`}
+                      aria-disabled={securityState !== "ready"}
+                    >
+                      <span className="upload-select-copy">
+                        <strong>{hasDocuments ? "Clique para atualizar este grupo" : "Clique para escolher os documentos"}</strong>
+                        <span>Selecione um ou vários arquivos desta categoria.</span>
+                      </span>
+                      <span className="upload-select-button">{securityState === "ready" ? selectionLabel : "Acessar para enviar"}</span>
+                    </button>
+
+                    <div className="upload-card-footer">
+                      <span>{category.accepts.join(" · ")}</span>
+                      <span>até 25 MB por arquivo</span>
+                    </div>
+
+                    {(hasDocuments || pendingTasks.length > 0) && (
+                      <div className="upload-card-files" aria-live="polite">
+                        {categorySources.map((source) => (
+                          <div className="upload-card-file" key={source.id}>
+                            <span className="upload-file-glyph" aria-hidden="true">{source.extractionMethod === "structured" ? "▦" : source.extractionMethod === "ocr" ? "◫" : "▤"}</span>
+                            <div className="upload-card-file-main">
+                              <strong title={source.fileName}>{source.fileName}</strong>
+                              <small>{formatBytes(source.size)} · {extractionLabel(source)}{source.warnings.length > 0 ? " · revisar" : ""}</small>
+                            </div>
+                            <span className={`source-status ${source.status}`}>{statusLabel(source.status)}</span>
+                            <button className="source-remove" type="button" onClick={() => void removeSource(source)} aria-label={`Remover ${source.fileName}`}>Remover</button>
+                            {source.warnings.length > 0 && <p className="upload-card-warning">{source.warnings[0]}</p>}
+                          </div>
+                        ))}
+                        {pendingTasks.map((task) => (
+                          <div className={`upload-card-task ${task.state}`} key={task.id}>
+                            <span aria-hidden="true">{task.state === "error" ? "!" : "…"}</span>
+                            <div><strong>{task.fileName}</strong><small>{task.state === "uploading" ? "Enviando ao Storage privado" : task.state === "extracting" ? "Extraindo e indexando" : task.error ?? "Falhou"}</small></div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
 
             <p className="upload-overview-note">Cada card mantém seus próprios documentos, alertas e botão de atualização. Os arquivos enviados continuam privados e vinculados ao seu espaço de análise.</p>
           </section>
