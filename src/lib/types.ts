@@ -15,7 +15,7 @@ export const DATA_CATEGORIES = [
     description:
       "Área, produção, produtividade, operações, irrigação, insumos, frota e perdas.",
     requiredColumns: ["data", "fazenda", "cultura", "talhão", "quantidade"],
-    accepts: ["XLSX", "CSV", "PDF", "DOCX", "JPG", "PNG"],
+    accepts: ["XLSX", "CSV", "PDF", "DOCX", "JPG", "PNG", "WEBP"],
   },
   {
     id: "costs",
@@ -42,7 +42,7 @@ export const DATA_CATEGORIES = [
     description:
       "Fluxo de caixa, contas a pagar/receber, extratos, financiamentos, CPRs e câmbio.",
     requiredColumns: ["data", "vencimento", "valor", "natureza", "moeda"],
-    accepts: ["XLSX", "CSV", "PDF", "DOCX", "JPG", "PNG"],
+    accepts: ["XLSX", "CSV", "PDF", "DOCX", "JPG", "PNG", "WEBP"],
   },
   {
     id: "commercial",
@@ -69,7 +69,7 @@ export const DATA_CATEGORIES = [
     description:
       "Políticas, contratos, riscos, metas, orçamento, relatórios e documentos estratégicos.",
     requiredColumns: [],
-    accepts: ["PDF", "DOCX", "TXT", "JPG", "PNG"],
+    accepts: ["PDF", "DOCX", "TXT", "JPG", "PNG", "WEBP"],
   },
 ] as const;
 

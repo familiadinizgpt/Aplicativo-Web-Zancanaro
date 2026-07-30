@@ -201,10 +201,6 @@ function mapDatabaseSource(source: DatabaseSource): ExtractedSource {
   };
 }
 
-function sourceUploadAccepts() {
-  return ".xlsx,.xls,.csv,.pdf,.docx,.txt,.png,.jpg,.jpeg,.webp";
-}
-
 const uploadMimeTypes: Record<string, string> = {
   xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   xls: "application/vnd.ms-excel",
@@ -217,6 +213,28 @@ const uploadMimeTypes: Record<string, string> = {
   jpeg: "image/jpeg",
   webp: "image/webp",
 };
+
+const extensionsByFormat: Record<string, string[]> = {
+  XLSX: [".xlsx"],
+  XLS: [".xls"],
+  CSV: [".csv"],
+  PDF: [".pdf"],
+  DOCX: [".docx"],
+  TXT: [".txt"],
+  PNG: [".png"],
+  JPG: [".jpg", ".jpeg"],
+  WEBP: [".webp"],
+};
+
+function sourceUploadAccepts(category: DataCategoryId) {
+  const acceptedFormats = DATA_CATEGORIES.find((item) => item.id === category)?.accepts ?? [];
+  return acceptedFormats.flatMap((format) => extensionsByFormat[format] ?? []).join(",");
+}
+
+function fileIsAcceptedByCategory(file: File, category: DataCategoryId) {
+  const extension = `.${file.name.split(".").pop()?.toLowerCase() ?? ""}`;
+  return sourceUploadAccepts(category).split(",").includes(extension);
+}
 
 function uploadMimeType(file: File) {
   const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
@@ -341,6 +359,26 @@ export function AnalysisDashboard() {
   const readySources = sources.filter((source) => source.status === "ready").length;
   const reviewSources = sources.filter((source) => source.status === "needs-review").length;
   const structuredSources = sources.filter((source) => source.extractionMethod === "structured").length;
+  const sourcesByCategory = useMemo(() => {
+    const grouped = Object.fromEntries(
+      DATA_CATEGORIES.map((category) => [category.id, [] as ExtractedSource[]]),
+    ) as Record<DataCategoryId, ExtractedSource[]>;
+
+    for (const source of sources) {
+      grouped[source.category]?.push(source);
+    }
+    return grouped;
+  }, [sources]);
+  const uploadTasksByCategory = useMemo(() => {
+    const grouped = Object.fromEntries(
+      DATA_CATEGORIES.map((category) => [category.id, [] as UploadTask[]]),
+    ) as Record<DataCategoryId, UploadTask[]>;
+
+    for (const task of uploadTasks) {
+      grouped[task.category]?.push(task);
+    }
+    return grouped;
+  }, [uploadTasks]);
 
   function updateUploadTask(id: string, update: Partial<UploadTask>) {
     setUploadTasks((current) => current.map((task) => (task.id === id ? { ...task, ...update } : task)));
@@ -401,6 +439,11 @@ export function AnalysisDashboard() {
         const task = tasks[index];
         if (file.size === 0 || file.size > 25 * 1024 * 1024) {
           throw new Error(`${file.name} deve ter entre 1 byte e 25 MB.`);
+        }
+        if (!fileIsAcceptedByCategory(file, category)) {
+          const categoryLabel = DATA_CATEGORIES.find((item) => item.id === category)?.label ?? category;
+          const acceptedFormats = DATA_CATEGORIES.find((item) => item.id === category)?.accepts.join(", ") ?? "formatos aceitos";
+          throw new Error(`${file.name} não pertence ao card “${categoryLabel}”. Use: ${acceptedFormats}.`);
         }
         const mimeType = uploadMimeType(file);
         if (!mimeType) {
@@ -475,14 +518,15 @@ export function AnalysisDashboard() {
   }
 
   async function handleInputUpload(category: DataCategoryId, event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
     try {
-      await uploadFiles(category, Array.from(event.target.files ?? []));
+      await uploadFiles(category, Array.from(input.files ?? []));
     } finally {
-      event.target.value = "";
+      input.value = "";
     }
   }
 
-  async function handleDrop(category: DataCategoryId, event: DragEvent<HTMLLabelElement>) {
+  async function handleDrop(category: DataCategoryId, event: DragEvent<HTMLElement>) {
     event.preventDefault();
     await uploadFiles(category, Array.from(event.dataTransfer.files));
   }
@@ -861,65 +905,91 @@ export function AnalysisDashboard() {
                 )}
               </article>
             ) : (
-              <>
-                <div className="upload-grid">
-                  {DATA_CATEGORIES.map((category, index) => (
-                    <label
-                      className={`upload-card ${uploadState[category.id] === "working" ? "is-uploading" : ""}`}
-                      htmlFor={`file-${category.id}`}
+              <div className="upload-grid">
+                {DATA_CATEGORIES.map((category, index) => {
+                  const categorySources = sourcesByCategory[category.id];
+                  const pendingTasks = uploadTasksByCategory[category.id]
+                    .filter((task) => task.state !== "ready")
+                    .slice(0, 4);
+                  const categoryIsUploading = uploadState[category.id] === "working";
+                  const categoryHasError = uploadState[category.id] === "error";
+                  const hasDocuments = categorySources.length > 0;
+
+                  return (
+                    <article
+                      className={`upload-card ${categoryIsUploading ? "is-uploading" : ""} ${hasDocuments ? "has-documents" : ""} ${categoryHasError ? "has-error" : ""}`}
                       key={category.id}
                       onDragOver={(event) => event.preventDefault()}
                       onDrop={(event) => void handleDrop(category.id, event)}
+                      data-testid={`upload-card-${category.id}`}
                     >
                       <input
                         id={`file-${category.id}`}
                         type="file"
                         multiple
                         className="sr-only"
-                        accept={sourceUploadAccepts()}
+                        accept={sourceUploadAccepts(category.id)}
                         onChange={(event) => void handleInputUpload(category.id, event)}
+                        data-testid={`upload-input-${category.id}`}
                       />
                       <div className="upload-topline">
                         <span className="upload-index">0{index + 1}</span>
-                        <span className={`upload-state ${categoriesLoaded.has(category.id) ? "is-loaded" : ""}`}>{categoriesLoaded.has(category.id) ? "Carregado" : "Aguardando"}</span>
+                        <span className={`upload-state ${hasDocuments ? "is-loaded" : ""}`}>
+                          {categoryIsUploading ? "Enviando" : hasDocuments ? `${categorySources.length} arquivo${categorySources.length === 1 ? "" : "s"}` : "Aguardando"}
+                        </span>
                       </div>
-                      <div className="upload-icon" aria-hidden="true">{category.id === "cashflow" ? "∿" : category.id === "production" ? "◌" : "＋"}</div>
-                      <h3>{category.label}</h3>
-                      <p>{category.description}</p>
-                      <div className="upload-footer"><span>{category.accepts.join(" · ")}</span><strong>Selecionar arquivos</strong></div>
-                    </label>
-                  ))}
-                </div>
+                      <div className="upload-card-heading">
+                        <div className="upload-icon" aria-hidden="true">{category.id === "cashflow" ? "∿" : category.id === "production" ? "◌" : "＋"}</div>
+                        <div>
+                          <h3>{category.label}</h3>
+                          <p>{category.description}</p>
+                        </div>
+                      </div>
 
-                {uploadTasks.length > 0 && <div className="upload-queue" aria-live="polite">{uploadTasks.slice(0, 12).map((task) => <div className={`upload-queue-row ${task.state}`} key={task.id}><span>{task.state === "ready" ? "✓" : task.state === "error" ? "!" : "…"}</span><strong>{task.fileName}</strong><small>{task.state === "uploading" ? "Enviando ao Storage privado" : task.state === "extracting" ? "Extraindo e indexando" : task.state === "ready" ? "Concluído" : task.error ?? "Falhou"}</small></div>)}</div>}
-              </>
+                      <div className="upload-dropzone">
+                        <div>
+                          <strong>{hasDocuments ? "Atualize este grupo" : "Adicione os documentos deste grupo"}</strong>
+                          <span>Arraste aqui ou selecione vários arquivos de uma vez.</span>
+                        </div>
+                        <label className="card-upload-button" htmlFor={`file-${category.id}`}>
+                          {hasDocuments ? "Atualizar documentos" : "Selecionar documentos"}
+                        </label>
+                      </div>
+
+                      <div className="upload-card-footer">
+                        <span>{category.accepts.join(" · ")}</span>
+                        <span>até 25 MB por arquivo</span>
+                      </div>
+
+                      {(hasDocuments || pendingTasks.length > 0) && (
+                        <div className="upload-card-files" aria-live="polite">
+                          {categorySources.map((source) => (
+                            <div className="upload-card-file" key={source.id}>
+                              <span className="upload-file-glyph" aria-hidden="true">{source.extractionMethod === "structured" ? "▦" : source.extractionMethod === "ocr" ? "◫" : "▤"}</span>
+                              <div className="upload-card-file-main">
+                                <strong title={source.fileName}>{source.fileName}</strong>
+                                <small>{formatBytes(source.size)} · {extractionLabel(source)}{source.warnings.length > 0 ? " · revisar" : ""}</small>
+                              </div>
+                              <span className={`source-status ${source.status}`}>{statusLabel(source.status)}</span>
+                              <button className="source-remove" type="button" onClick={() => void removeSource(source)} aria-label={`Remover ${source.fileName}`}>Remover</button>
+                              {source.warnings.length > 0 && <p className="upload-card-warning">{source.warnings[0]}</p>}
+                            </div>
+                          ))}
+                          {pendingTasks.map((task) => (
+                            <div className={`upload-card-task ${task.state}`} key={task.id}>
+                              <span aria-hidden="true">{task.state === "error" ? "!" : "…"}</span>
+                              <div><strong>{task.fileName}</strong><small>{task.state === "uploading" ? "Enviando ao Storage privado" : task.state === "extracting" ? "Extraindo e indexando" : task.error ?? "Falhou"}</small></div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
             )}
 
-            <article className="panel source-table-panel">
-              <div className="panel-heading">
-                <div><p className="section-kicker">EXTRAÇÕES</p><h3>Fontes carregadas</h3></div>
-                <span className="count-pill">{sources.length} arquivo(s)</span>
-              </div>
-              {sources.length === 0 ? (
-                <EmptyState title="Nenhuma fonte carregada" text="Envie arquivos acima. Nenhum número de demonstração é usado nesta aplicação." />
-              ) : (
-                <div className="source-list">
-                  {sources.map((source) => (
-                    <article className="source-row" key={source.id}>
-                      <div className="file-glyph" aria-hidden="true">{source.extractionMethod === "structured" ? "▦" : source.extractionMethod === "ocr" ? "◫" : "▤"}</div>
-                      <div className="source-main">
-                        <strong>{source.fileName}</strong>
-                        <span>{DATA_CATEGORIES.find((item) => item.id === source.category)?.label} · {formatBytes(source.size)} · {extractionLabel(source)}</span>
-                      </div>
-                      <div className="source-evidence"><strong>{source.recordCount > 0 ? source.recordCount.toLocaleString("pt-BR") : source.evidence.length}</strong><span>{source.recordCount > 0 ? "registros" : "trechos"}</span></div>
-                      <span className={`source-status ${source.status}`}>{statusLabel(source.status)}</span>
-                      {securityState === "ready" && <button className="source-remove" type="button" onClick={() => void removeSource(source)}>Remover</button>}
-                      {source.warnings.length > 0 && <p className="source-warning">{source.warnings[0]}</p>}
-                    </article>
-                  ))}
-                </div>
-              )}
-            </article>
+            <p className="upload-overview-note">Cada card mantém seus próprios documentos, alertas e botão de atualização. Os arquivos enviados continuam privados e vinculados ao seu espaço de análise.</p>
           </section>
         )}
 
