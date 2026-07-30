@@ -205,6 +205,26 @@ function sourceUploadAccepts() {
   return ".xlsx,.xls,.csv,.pdf,.docx,.txt,.png,.jpg,.jpeg,.webp";
 }
 
+const uploadMimeTypes: Record<string, string> = {
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  xls: "application/vnd.ms-excel",
+  csv: "text/csv",
+  pdf: "application/pdf",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  txt: "text/plain",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+};
+
+function uploadMimeType(file: File) {
+  const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+  const fallback = uploadMimeTypes[extension];
+  if (!fallback) return null;
+  return fallback;
+}
+
 function safeFileName(fileName: string) {
   return fileName
     .normalize("NFD")
@@ -382,11 +402,15 @@ export function AnalysisDashboard() {
         if (file.size === 0 || file.size > 25 * 1024 * 1024) {
           throw new Error(`${file.name} deve ter entre 1 byte e 25 MB.`);
         }
+        const mimeType = uploadMimeType(file);
+        if (!mimeType) {
+          throw new Error(`${file.name} não possui um formato aceito. Use XLSX, XLS, CSV, PDF, DOCX, TXT ou imagem PNG/JPG/WebP.`);
+        }
 
         const supabase = createSupabaseBrowserClient();
         const storagePath = `${userId}/${workspaceId}/${task.id}-${safeFileName(file.name)}`;
         const { error: uploadError } = await supabase.storage.from("agro-analysis-files").upload(storagePath, file, {
-          contentType: file.type || "application/octet-stream",
+          contentType: mimeType,
           upsert: false,
         });
         if (uploadError) throw uploadError;
@@ -399,7 +423,7 @@ export function AnalysisDashboard() {
             category,
             original_name: file.name,
             storage_path: storagePath,
-            mime_type: file.type || "application/octet-stream",
+            mime_type: mimeType,
             byte_size: file.size,
             extraction_status: "queued",
           })
