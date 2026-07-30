@@ -71,12 +71,6 @@ export async function POST(request: Request) {
   try {
     const payload = requestSchema.parse(await request.json());
     const { supabase, userId } = await requireSupabaseUser();
-    if (!process.env.AI_GATEWAY_API_KEY && !process.env.VERCEL_OIDC_TOKEN) {
-      return NextResponse.json(
-        { error: "A IA está indisponível neste ambiente. Habilite o AI Gateway da Vercel ou configure uma chave somente no servidor." },
-        { status: 503 },
-      );
-    }
     const uniqueSourceIds = Array.from(new Set(payload.sourceIds));
     const { data, error } = await supabase
       .from("source_files")
@@ -177,6 +171,12 @@ Regras imutáveis:
       return NextResponse.json({ error: "Acesse seu espaço seguro antes de solicitar a análise por IA." }, { status: 401 });
     }
     if (APICallError.isInstance(error)) {
+      if (error.statusCode === 401 || error.statusCode === 403) {
+        return NextResponse.json(
+          { error: "A IA ainda não está autorizada neste ambiente. Habilite o AI Gateway da Vercel para concluir a análise." },
+          { status: 503 },
+        );
+      }
       if (error.statusCode === 402) {
         return NextResponse.json({ error: "O limite de uso da IA foi atingido. Revise o orçamento do AI Gateway." }, { status: 402 });
       }
