@@ -6,7 +6,7 @@ export const DATA_CATEGORIES = [
     description:
       "Empresas, fazendas, safras, culturas, talhões, centros de custo e plano de contas.",
     requiredColumns: ["empresa", "fazenda", "safra", "cultura"],
-    accepts: ["XLSX", "CSV", "PDF", "DOCX"],
+    accepts: ["XLSX", "XLS", "CSV", "PDF", "DOCX"],
   },
   {
     id: "production",
@@ -15,7 +15,7 @@ export const DATA_CATEGORIES = [
     description:
       "Área, produção, produtividade, operações, irrigação, insumos, frota e perdas.",
     requiredColumns: ["data", "fazenda", "cultura", "talhão", "quantidade"],
-    accepts: ["XLSX", "CSV", "PDF", "DOCX", "JPG", "PNG", "WEBP"],
+    accepts: ["XLSX", "XLS", "CSV", "PDF", "DOCX", "JPG", "PNG", "WEBP"],
   },
   {
     id: "costs",
@@ -24,7 +24,7 @@ export const DATA_CATEGORIES = [
     description:
       "Custos realizados e orçados por fazenda, cultura, talhão e centro de custo.",
     requiredColumns: ["data", "empresa", "centro de custo", "conta", "valor"],
-    accepts: ["XLSX", "CSV", "PDF", "DOCX"],
+    accepts: ["XLSX", "XLS", "CSV", "PDF", "DOCX"],
   },
   {
     id: "accounting",
@@ -33,7 +33,7 @@ export const DATA_CATEGORIES = [
     description:
       "Balancete, razão, DRE, plano de contas, rateios e conciliações.",
     requiredColumns: ["data", "conta", "histórico", "débito", "crédito", "saldo"],
-    accepts: ["XLSX", "CSV", "PDF", "DOCX"],
+    accepts: ["XLSX", "XLS", "CSV", "PDF", "DOCX"],
   },
   {
     id: "cashflow",
@@ -42,7 +42,7 @@ export const DATA_CATEGORIES = [
     description:
       "Fluxo de caixa, contas a pagar/receber, extratos, financiamentos, CPRs e câmbio.",
     requiredColumns: ["data", "vencimento", "valor", "natureza", "moeda"],
-    accepts: ["XLSX", "CSV", "PDF", "DOCX", "JPG", "PNG", "WEBP"],
+    accepts: ["XLSX", "XLS", "CSV", "PDF", "DOCX", "JPG", "PNG", "WEBP"],
   },
   {
     id: "commercial",
@@ -51,7 +51,7 @@ export const DATA_CATEGORIES = [
     description:
       "Vendas, contratos, preços, volumes, estoque comprometido, câmbio e travas.",
     requiredColumns: ["data", "produto", "quantidade", "preço", "cliente"],
-    accepts: ["XLSX", "CSV", "PDF", "DOCX"],
+    accepts: ["XLSX", "XLS", "CSV", "PDF", "DOCX"],
   },
   {
     id: "inventory",
@@ -60,7 +60,7 @@ export const DATA_CATEGORIES = [
     description:
       "SB2, inventário físico, ativos, imóveis, lavouras em formação e investimentos.",
     requiredColumns: ["data", "item", "quantidade", "valor", "local"],
-    accepts: ["XLSX", "CSV", "PDF", "DOCX"],
+    accepts: ["XLSX", "XLS", "CSV", "PDF", "DOCX"],
   },
   {
     id: "governance",
