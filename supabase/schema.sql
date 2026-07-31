@@ -21,6 +21,7 @@ create table if not exists public.source_files (
   category text not null check (category in (
     'structure', 'production', 'costs', 'accounting', 'cashflow', 'commercial', 'inventory', 'governance'
   )),
+  requirement_id text,
   original_name text not null,
   storage_path text not null unique,
   mime_type text not null,
