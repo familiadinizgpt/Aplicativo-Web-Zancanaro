@@ -85,6 +85,7 @@ export interface EvidenceFragment {
 export interface ExtractedSource {
   id: string;
   category: DataCategoryId;
+  requirementId: string | null;
   fileName: string;
   storagePath?: string;
   mimeType: string;
