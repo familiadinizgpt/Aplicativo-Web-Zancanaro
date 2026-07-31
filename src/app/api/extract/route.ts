@@ -33,6 +33,7 @@ type RawSource = {
   id: string;
   workspace_id: string;
   category: string;
+  requirement_id: string | null;
   original_name: string;
   storage_path: string;
   mime_type: string;
@@ -150,8 +151,38 @@ async function extractPdf(buffer: Buffer): Promise<ExtractedContent> {
   try {
     const result = await parser.getText({ first: 30 });
     const text = result.text.trim();
+    if (!text) {
+      const pageLimit = Math.min(result.total, 8);
+      const screenshots = await parser.getScreenshot({ first: pageLimit, desiredWidth: 1800, imageBuffer: true, imageDataUrl: false });
+      const { createWorker } = await import("tesseract.js");
+      const worker = await createWorker("por");
+      try {
+        const evidence: ExtractedSource["evidence"] = [];
+        for (const page of screenshots.pages) {
+          const recognized = await worker.recognize(Buffer.from(page.data));
+          const pageText = recognized.data.text.replace(/\s+/g, " ").trim();
+          if (pageText) {
+            evidence.push({ reference: `Página ${page.pageNumber} · OCR`, text: pageText.slice(0, 1400) });
+          }
+        }
+        return {
+          method: "ocr",
+          columns: [],
+          recordCount: 0,
+          previewRows: [],
+          evidence,
+          warnings: [
+            `OCR aplicado em ${pageLimit} de ${result.total} página(s). Revise valores, datas, sinais e nomes antes dos cálculos.`,
+            ...(result.total > pageLimit ? [`O PDF possui ${result.total} páginas; divida-o em arquivos de até ${pageLimit} páginas para OCR integral.`] : []),
+            ...(evidence.length === 0 ? ["O OCR não reconheceu texto suficiente; envie uma digitalização mais nítida."] : []),
+          ],
+        };
+      } finally {
+        await worker.terminate();
+      }
+    }
     return {
-      method: text ? "text" : "manual-review",
+      method: "text",
       columns: [],
       recordCount: 0,
       previewRows: [],
@@ -159,11 +190,9 @@ async function extractPdf(buffer: Buffer): Promise<ExtractedContent> {
         reference: `Página ${page.num}`,
         text: page.text.replace(/\s+/g, " ").trim().slice(0, 700),
       })),
-      warnings: text
-        ? result.total > 30
-          ? ["Foram extraídas as primeiras 30 páginas para prévia. Revise o documento integral antes de decidir."]
-          : []
-        : ["PDF sem camada de texto. Envie páginas relevantes em PNG/JPG para OCR ou configure OCR de PDF."],
+      warnings: result.total > 30
+        ? ["Foram extraídas as primeiras 30 páginas para prévia. Divida o PDF para processar o conteúdo integral."]
+        : [],
     };
   } finally {
     await parser.destroy();
@@ -231,6 +260,7 @@ function toSource(
   return {
     id: source.id,
     category: source.category as DataCategoryId,
+    requirementId: source.requirement_id,
     fileName: source.original_name,
     storagePath: source.storage_path,
     mimeType: source.mime_type,
@@ -260,7 +290,7 @@ export async function POST(request: Request) {
 
     const { data, error } = await supabase
       .from("source_files")
-      .select("id, workspace_id, category, original_name, storage_path, mime_type, byte_size, extraction_status, extraction_method, record_count, columns_json, preview_json, warnings_json, created_at")
+      .select("id, workspace_id, category, requirement_id, original_name, storage_path, mime_type, byte_size, extraction_status, extraction_method, record_count, columns_json, preview_json, warnings_json, created_at")
       .eq("id", sourceId)
       .eq("uploaded_by", userId)
       .single();
