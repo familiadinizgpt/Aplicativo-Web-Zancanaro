@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
+import type { User } from "@supabase/supabase-js";
 
 import {
   calculateAllScenarios,
@@ -26,16 +27,26 @@ import {
 
 type View = "overview" | "ingestion" | "crosscheck" | "scenarios" | "report";
 type AsyncState = "idle" | "working" | "error" | "done";
-type SecurityState = "checking" | "ready" | "signed-out" | "unconfigured" | "error";
+type SecurityState = "checking" | "ready" | "unauthenticated" | "unconfigured" | "error";
 type UploadTaskState = "uploading" | "extracting" | "ready" | "error";
 
 type UploadTask = {
   id: string;
   fileName: string;
   category: DataCategoryId;
+  requirementId: string;
   state: UploadTaskState;
   error?: string;
 };
+
+type InformationRequirement = {
+  id: string;
+  label: string;
+  detail: string;
+  keywords: string[];
+};
+
+type InformationRequirementState = "identified" | "review" | "missing";
 
 type CrossCheckDefinition = {
   id: string;
@@ -68,6 +79,7 @@ type CrossCheckState = {
 type DatabaseSource = {
   id: string;
   category: string;
+  requirement_id: string | null;
   original_name: string;
   storage_path: string;
   mime_type: string;
@@ -90,6 +102,49 @@ const crossCheckDefinitions: CrossCheckDefinition[] = [
   { id: "commercial-inventory", label: "Comercial × Estoque", leftCategory: "commercial", rightCategory: "inventory", keys: ["produto", "quantidade", "valor"] },
   { id: "debt-cashflow", label: "Dívida × Fluxo de caixa", leftCategory: "cashflow", rightCategory: "cashflow", keys: ["credor", "vencimento", "moeda", "valor"] },
 ];
+
+const informationRequirements: Record<DataCategoryId, InformationRequirement[]> = {
+  structure: [
+    { id: "entities", label: "Empresas e unidades", detail: "CNPJ, empresa, fazenda e unidade operacional.", keywords: ["cnpj", "empresa", "fazenda", "unidade"] },
+    { id: "fields", label: "Talhões e áreas", detail: "Talhão, área, cultura, safra e status produtivo.", keywords: ["talhao", "hectare", "area", "cultura", "safra"] },
+    { id: "cost-centers", label: "Centros de custo", detail: "Centro de custo, plano de contas e critérios de rateio.", keywords: ["centro de custo", "plano de contas", "rateio"] },
+  ],
+  production: [
+    { id: "area-production", label: "Área, produção e produtividade", detail: "Planejado e realizado por fazenda, cultura, safra e talhão.", keywords: ["produtividade", "producao", "quantidade", "talhao", "hectare"] },
+    { id: "operations", label: "Operações agrícolas", detail: "Plantio, tratos, colheita, irrigação, frota e consumo de insumos.", keywords: ["plantio", "colheita", "irrigacao", "operacao", "insumo", "frota"] },
+    { id: "losses", label: "Perdas e ocorrências", detail: "Clima, pragas, replantio, paradas e perdas de produção.", keywords: ["perda", "clima", "praga", "ocorrencia", "replantio"] },
+  ],
+  costs: [
+    { id: "actual-costs", label: "Custos realizados", detail: "Custos por período, fazenda, cultura, talhão e conta.", keywords: ["custo", "valor", "fazenda", "cultura", "talhao"] },
+    { id: "budget", label: "Orçamento e desvios", detail: "Orçado versus realizado e justificativas de variação.", keywords: ["orcamento", "orcado", "desvio", "realizado"] },
+    { id: "allocation", label: "Rateios e custo completo", detail: "Base de rateio, custos indiretos e lavoura em formação.", keywords: ["rateio", "indireto", "custo completo", "lavoura"] },
+  ],
+  accounting: [
+    { id: "trial-balance", label: "Balancete e razão", detail: "Balancete mensal, razão e plano de contas do período.", keywords: ["balancete", "razao", "saldo", "debito", "credito"] },
+    { id: "income-statement", label: "DRE e resultado", detail: "Receita, custos, despesas e resultado por empresa/consolidado.", keywords: ["dre", "receita", "despesa", "resultado"] },
+    { id: "reconciliations", label: "Conciliações e ajustes", detail: "Conciliações, lançamentos de ajuste e critérios contábeis.", keywords: ["conciliacao", "ajuste", "lancamento", "contabil"] },
+  ],
+  cashflow: [
+    { id: "cash-flow", label: "Fluxo de caixa", detail: "Realizado e projetado, com saldo inicial e final por período.", keywords: ["fluxo de caixa", "saldo inicial", "saldo final", "recebimento"] },
+    { id: "debt-map", label: "Mapa da dívida", detail: "Credor, saldo, taxa, parcela, vencimento, garantia e indexador.", keywords: ["credor", "vencimento", "juros", "parcela", "divida", "financiamento"] },
+    { id: "currency", label: "Câmbio e exposição", detail: "Dívida ou contrato em moeda estrangeira, trava e taxa de referência.", keywords: ["cambio", "dolar", "moeda", "trava", "exchange"] },
+  ],
+  commercial: [
+    { id: "sales", label: "Vendas realizadas", detail: "Produto, volume, preço, cliente, data e condição comercial.", keywords: ["venda", "cliente", "produto", "preco", "quantidade"] },
+    { id: "contracts", label: "Contratos e compromissos", detail: "Contratos, CPRs, volumes comprometidos e vencimentos.", keywords: ["contrato", "cpr", "comprometido", "vencimento"] },
+    { id: "commercial-plan", label: "Posição a vender", detail: "Estoque livre, produção prevista, preços mínimos e estratégia.", keywords: ["estoque livre", "a vender", "preco minimo", "producao prevista"] },
+  ],
+  inventory: [
+    { id: "physical-inventory", label: "Inventário físico", detail: "Item, quantidade, local, data da contagem e condição.", keywords: ["inventario", "item", "quantidade", "local"] },
+    { id: "accounting-stock", label: "Estoque contábil", detail: "SB2, estoque de terceiros, comprometido e livre.", keywords: ["sb2", "estoque", "terceiro", "comprometido"] },
+    { id: "assets", label: "Ativos e investimentos", detail: "Imóveis, máquinas, obras, CAPEX e lavouras em formação.", keywords: ["ativo", "imovel", "maquina", "investimento", "capex"] },
+  ],
+  governance: [
+    { id: "strategy", label: "Metas e decisões", detail: "Metas, decisões dos próximos 90 dias e investimentos planejados.", keywords: ["meta", "decisao", "investimento", "prioridade"] },
+    { id: "risk", label: "Riscos e políticas", detail: "Risco climático, preço, câmbio, crédito e alçadas de aprovação.", keywords: ["risco", "clima", "cambio", "credito", "politica"] },
+    { id: "responsibilities", label: "Responsáveis e governança", detail: "Gestores por área/fazenda, comitês e rotinas de acompanhamento.", keywords: ["responsavel", "gestor", "comite", "governanca"] },
+  ],
+};
 
 function createCrossCheckState(): Record<string, CrossCheckState> {
   return Object.fromEntries(
@@ -172,6 +227,38 @@ function stringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+function normalizeSearchText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("pt-BR");
+}
+
+function getRequirementState(sources: ExtractedSource[], requirement: InformationRequirement): InformationRequirementState {
+  const assignedSources = sources.filter((source) => source.requirementId === requirement.id);
+  if (assignedSources.length > 0) {
+    return assignedSources.some((source) => source.status === "ready") ? "identified" : "review";
+  }
+  if (sources.length === 0) return "missing";
+  // Compatibilidade com arquivos enviados antes de existirem subáreas explícitas.
+  const searchable = sources.map((source) => normalizeSearchText([
+    source.fileName,
+    ...source.columns,
+    ...source.evidence.map((item) => `${item.reference} ${item.text}`),
+    ...source.previewRows.map((row) => Object.values(row).join(" ")),
+  ].join(" ")));
+  const hasEvidence = requirement.keywords.some((keyword) => searchable.some((text) => text.includes(normalizeSearchText(keyword))));
+  return hasEvidence ? "identified" : "review";
+}
+
+function requirementStateLabel(state: InformationRequirementState) {
+  return {
+    identified: "Evidência identificada",
+    review: "Revisar arquivo",
+    missing: "Pendente",
+  }[state];
+}
+
 function mapDatabaseSource(source: DatabaseSource): ExtractedSource {
   const extractionMethod = (source.extraction_method ?? "manual_review").replace("_", "-") as ExtractedSource["extractionMethod"];
   const statusMap: Record<string, ExtractedSource["status"]> = {
@@ -184,6 +271,7 @@ function mapDatabaseSource(source: DatabaseSource): ExtractedSource {
   return {
     id: source.id,
     category: source.category as DataCategoryId,
+    requirementId: source.requirement_id,
     fileName: source.original_name,
     storagePath: source.storage_path,
     mimeType: source.mime_type,
@@ -261,9 +349,6 @@ export function AnalysisDashboard() {
   const [securityState, setSecurityState] = useState<SecurityState>(SUPABASE_CONFIGURED ? "checking" : "unconfigured");
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
-  const [userEmail, setUserEmail] = useState<string | null>(null);
-  const [emailToSignIn, setEmailToSignIn] = useState("");
-  const [authState, setAuthState] = useState<AsyncState>("idle");
   const [crossCheckState, setCrossCheckState] = useState<Record<string, CrossCheckState>>(createCrossCheckState);
   const [message, setMessage] = useState(
     SUPABASE_CONFIGURED
@@ -273,6 +358,45 @@ export function AnalysisDashboard() {
   const [analysis, setAnalysis] = useState<AiAnalysisResult | null>(null);
   const [analysisState, setAnalysisState] = useState<AsyncState>("idle");
   const [exportState, setExportState] = useState<AsyncState>("idle");
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginState, setLoginState] = useState<AsyncState>("idle");
+
+  async function prepareSecureWorkspace(user: User) {
+    const supabase = createSupabaseBrowserClient();
+    const { data: existingWorkspace, error: workspaceReadError } = await supabase
+      .from("analysis_workspaces")
+      .select("id")
+      .eq("owner_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (workspaceReadError) throw workspaceReadError;
+
+    let nextWorkspaceId = existingWorkspace?.id ?? null;
+    if (!nextWorkspaceId) {
+      const { data: createdWorkspace, error: workspaceCreateError } = await supabase
+        .from("analysis_workspaces")
+        .insert({ owner_id: user.id, name: "Análise atual", company_name: "Grupo Zancanaro" })
+        .select("id")
+        .single();
+      if (workspaceCreateError || !createdWorkspace) throw workspaceCreateError ?? new Error("Não foi possível criar o espaço de análise.");
+      nextWorkspaceId = createdWorkspace.id;
+    }
+
+    const { data: storedSources, error: sourceReadError } = await supabase
+      .from("source_files")
+      .select("id, category, requirement_id, original_name, storage_path, mime_type, byte_size, extraction_status, extraction_method, record_count, columns_json, preview_json, warnings_json, created_at, evidence_fragments(reference, content, ordinal)")
+      .eq("workspace_id", nextWorkspaceId)
+      .order("created_at", { ascending: false });
+    if (sourceReadError) throw sourceReadError;
+
+    setSources(((storedSources ?? []) as DatabaseSource[]).map(mapDatabaseSource));
+    setWorkspaceId(nextWorkspaceId);
+    setUserId(user.id);
+    setSecurityState("ready");
+    setMessage("Acesso seguro liberado. Escolha os documentos diretamente em cada card; nada será preenchido com dados fictícios.");
+  }
 
   useEffect(() => {
     if (!SUPABASE_CONFIGURED) {
@@ -287,61 +411,24 @@ export function AnalysisDashboard() {
         if (sessionError) throw sessionError;
         if (!sessionData.session) {
           if (active) {
-            setSecurityState("signed-out");
-            setMessage("Acesse com seu e-mail para criar um espaço privado e persistente para os documentos.");
+            setSecurityState("unauthenticated");
+            setMessage("Acesso restrito. Entre com seu e-mail e senha para abrir o espaço de análise.");
           }
           return;
         }
         const { data: userData, error: userError } = await supabase.auth.getUser();
         if (userError) throw userError;
         if (!userData.user) {
-          if (active) {
-            setSecurityState("signed-out");
-            setMessage("Acesse com seu e-mail para criar um espaço privado e persistente para os documentos.");
-          }
-          return;
+          throw new Error("Não foi possível validar a sessão de acesso.");
         }
-
-        const user = userData.user;
-        const { data: existingWorkspace, error: workspaceReadError } = await supabase
-          .from("analysis_workspaces")
-          .select("id")
-          .eq("owner_id", user.id)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (workspaceReadError) throw workspaceReadError;
-
-        let nextWorkspaceId = existingWorkspace?.id ?? null;
-        if (!nextWorkspaceId) {
-          const { data: createdWorkspace, error: workspaceCreateError } = await supabase
-            .from("analysis_workspaces")
-            .insert({ owner_id: user.id, name: "Análise atual", company_name: "Grupo Zancanaro" })
-            .select("id")
-            .single();
-          if (workspaceCreateError || !createdWorkspace) throw workspaceCreateError ?? new Error("Não foi possível criar o espaço de análise.");
-          nextWorkspaceId = createdWorkspace.id;
-        }
-
-        const { data: storedSources, error: sourceReadError } = await supabase
-          .from("source_files")
-          .select("id, category, original_name, storage_path, mime_type, byte_size, extraction_status, extraction_method, record_count, columns_json, preview_json, warnings_json, created_at, evidence_fragments(reference, content, ordinal)")
-          .eq("workspace_id", nextWorkspaceId)
-          .order("created_at", { ascending: false });
-        if (sourceReadError) throw sourceReadError;
-
         if (active) {
-          setSources(((storedSources ?? []) as DatabaseSource[]).map(mapDatabaseSource));
-          setWorkspaceId(nextWorkspaceId);
-          setUserId(user.id);
-          setUserEmail(user.email ?? null);
-          setSecurityState("ready");
-          setMessage("Espaço privado conectado. Envie fontes oficiais; nada será preenchido com dados fictícios.");
+          await prepareSecureWorkspace(userData.user);
         }
-      } catch {
+      } catch (error) {
         if (active) {
           setSecurityState("error");
-          setMessage("Não foi possível preparar o espaço seguro. Confira a conexão Supabase e tente atualizar a página.");
+          const detail = error instanceof Error ? error.message : "Não foi possível preparar o espaço privado.";
+          setMessage(`${detail} Atualize a página e tente novamente.`);
         }
       }
     }
@@ -351,6 +438,46 @@ export function AnalysisDashboard() {
       active = false;
     };
   }, []);
+
+  async function handlePasswordLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!loginEmail.trim() || !loginPassword) {
+      setMessage("Informe e-mail e senha para acessar o webapp.");
+      return;
+    }
+    setLoginState("working");
+    setSecurityState("checking");
+    setMessage("Validando suas credenciais…");
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: loginEmail.trim(),
+        password: loginPassword,
+      });
+      if (error || !data.user) throw error ?? new Error("Não foi possível iniciar a sessão.");
+      await prepareSecureWorkspace(data.user);
+      setLoginPassword("");
+      setLoginState("done");
+    } catch {
+      setLoginState("error");
+      setSecurityState("unauthenticated");
+      setMessage("E-mail ou senha inválidos. Confirme suas credenciais e tente novamente.");
+    }
+  }
+
+  async function signOut() {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await supabase.auth.signOut();
+    } finally {
+      setSources([]);
+      setWorkspaceId(null);
+      setUserId(null);
+      setSecurityState("unauthenticated");
+      setLoginPassword("");
+      setMessage("Sessão encerrada. Entre novamente para acessar os documentos privados.");
+    }
+  }
 
   const scenarioResults = useMemo(() => calculateAllScenarios(simulation), [simulation]);
   const missingRequirements = useMemo(() => getMissingSimulationRequirements(simulation), [simulation]);
@@ -384,54 +511,16 @@ export function AnalysisDashboard() {
     setUploadTasks((current) => current.map((task) => (task.id === id ? { ...task, ...update } : task)));
   }
 
-  async function sendMagicLink() {
-    if (!SUPABASE_CONFIGURED) return;
-    const email = emailToSignIn.trim();
-    if (!email) {
-      setAuthState("error");
-      setMessage("Informe seu e-mail corporativo para receber o link de acesso.");
-      return;
-    }
-
-    setAuthState("working");
-    try {
-      const supabase = createSupabaseBrowserClient();
-      const redirect = new URL("/auth/callback", window.location.origin).toString();
-      const { error } = await supabase.auth.signInWithOtp({
-        email,
-        options: { emailRedirectTo: redirect, shouldCreateUser: true },
-      });
-      if (error) throw error;
-      setAuthState("done");
-      setMessage("Link seguro enviado. Abra-o no mesmo navegador para acessar o espaço privado.");
-    } catch (error) {
-      setAuthState("error");
-      setMessage(error instanceof Error ? error.message : "Não foi possível enviar o link de acesso.");
-    }
-  }
-
-  async function signOut() {
-    if (!SUPABASE_CONFIGURED) return;
-    const supabase = createSupabaseBrowserClient();
-    await supabase.auth.signOut();
-    setSources([]);
-    setWorkspaceId(null);
-    setUserId(null);
-    setUserEmail(null);
-    setSecurityState("signed-out");
-    setMessage("Sessão encerrada. Seus arquivos continuam guardados no espaço privado da sua conta.");
-  }
-
-  async function uploadFiles(category: DataCategoryId, files: File[]) {
+  async function uploadFiles(category: DataCategoryId, requirementId: string, files: File[]) {
     if (files.length === 0) return;
     if (securityState !== "ready" || !workspaceId || !userId) {
-      setMessage("Acesse o espaço seguro antes de enviar arquivos corporativos.");
+      setMessage("O espaço privado ainda está sendo preparado. Aguarde alguns segundos e clique novamente no card.");
       return;
     }
 
     setUploadState((current) => ({ ...current, [category]: "working" }));
     setMessage(`Enviando e extraindo ${files.length} arquivo(s) em ${DATA_CATEGORIES.find((item) => item.id === category)?.shortLabel ?? category}…`);
-    const tasks = files.map((file) => ({ id: crypto.randomUUID(), fileName: file.name, category, state: "uploading" as const }));
+    const tasks = files.map((file) => ({ id: crypto.randomUUID(), fileName: file.name, category, requirementId, state: "uploading" as const }));
     setUploadTasks((current) => [...tasks, ...current]);
 
     const outcomes = await Promise.allSettled(
@@ -464,6 +553,7 @@ export function AnalysisDashboard() {
             workspace_id: workspaceId,
             uploaded_by: userId,
             category,
+            requirement_id: requirementId,
             original_name: file.name,
             storage_path: storagePath,
             mime_type: mimeType,
@@ -517,16 +607,16 @@ export function AnalysisDashboard() {
     );
   }
 
-  async function handleInputUpload(category: DataCategoryId, event: ChangeEvent<HTMLInputElement>) {
+  async function handleInputUpload(category: DataCategoryId, requirementId: string, event: ChangeEvent<HTMLInputElement>) {
     const input = event.currentTarget;
     try {
-      await uploadFiles(category, Array.from(input.files ?? []));
+      await uploadFiles(category, requirementId, Array.from(input.files ?? []));
     } finally {
       input.value = "";
     }
   }
 
-  function openCategoryPicker(category: DataCategoryId) {
+  function openRequirementPicker(category: DataCategoryId, requirementId: string) {
     if (securityState !== "ready") {
       const categoryLabel = DATA_CATEGORIES.find((item) => item.id === category)?.label ?? "este card";
       if (securityState === "checking") {
@@ -534,13 +624,12 @@ export function AnalysisDashboard() {
       } else if (securityState === "unconfigured") {
         setMessage("A conexão segura ainda não está configurada. Os cards serão habilitados assim que a conexão privada estiver ativa.");
       } else {
-        setMessage(`Acesse com seu e-mail para habilitar o upload em “${categoryLabel}”.`);
-        document.getElementById("secure-access-email")?.focus();
+        setMessage(`Faça login para enviar documentos em “${categoryLabel}”.`);
       }
       return;
     }
 
-    document.getElementById(`file-${category}`)?.click();
+    document.getElementById(`file-${category}-${requirementId}`)?.click();
   }
 
   function updateBase(key: keyof FinancialBase, rawValue: string) {
@@ -797,11 +886,17 @@ export function AnalysisDashboard() {
             <h1>Centro de análise</h1>
           </div>
           <div className="top-actions">
-            <span className={`environment-pill ${securityState === "ready" ? "is-connected" : ""}`} title={userEmail ?? undefined}>
-              <span /> {securityState === "ready" ? "Espaço privado conectado" : securityState === "checking" ? "Conectando espaço seguro" : "Acesso necessário"}
+            <span className={`environment-pill ${securityState === "ready" ? "is-connected" : ""}`}>
+              <span /> {securityState === "ready" ? "Acesso seguro" : securityState === "checking" ? "Validando acesso" : "Login necessário"}
             </span>
-            {securityState === "ready" && <button className="quiet-action" type="button" onClick={() => void signOut()}>Sair</button>}
-            <button className="primary-action" type="button" onClick={() => setActiveView("ingestion")} disabled={securityState !== "ready"}>Adicionar fontes <span aria-hidden="true">→</span></button>
+            {securityState === "ready" ? (
+              <>
+                <button className="primary-action" type="button" onClick={() => setActiveView("ingestion")}>Adicionar fontes <span aria-hidden="true">→</span></button>
+                <button className="quiet-action" type="button" onClick={() => void signOut()}>Sair</button>
+              </>
+            ) : (
+              <button className="primary-action" type="button" onClick={() => setActiveView("ingestion")}>Entrar <span aria-hidden="true">→</span></button>
+            )}
           </div>
         </header>
 
@@ -897,24 +992,31 @@ export function AnalysisDashboard() {
                   </>
                 ) : securityState === "checking" ? (
                   <>
-                    <h3>Preparando seu espaço privado</h3>
-                    <p>Conferindo autenticação e acesso ao Storage seguro…</p>
+                    <h3>Validando acesso seguro</h3>
+                    <p>Conferindo a sessão e o espaço privado do usuário.</p>
+                  </>
+                ) : securityState === "unauthenticated" ? (
+                  <>
+                    <h3>Acesso restrito ao webapp</h3>
+                    <p>Entre com as credenciais cadastradas pelo administrador. Os arquivos ficam em Storage privado e cada usuário só acessa seu próprio espaço de análise.</p>
+                    <form className="secure-access-form" onSubmit={(event) => void handlePasswordLogin(event)}>
+                      <label className="field wide-field">
+                        <span>E-mail</span>
+                        <input type="email" autoComplete="email" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} placeholder="voce@empresa.com" required />
+                      </label>
+                      <label className="field wide-field">
+                        <span>Senha</span>
+                        <input type="password" autoComplete="current-password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} placeholder="Sua senha" required />
+                      </label>
+                      <button className="primary-action" type="submit" disabled={loginState === "working"}>{loginState === "working" ? "Entrando…" : "Entrar"}</button>
+                    </form>
                   </>
                 ) : securityState === "error" ? (
                   <>
-                    <h3>Não foi possível abrir o espaço privado</h3>
-                    <p>Atualize a página após conferir a conexão do projeto Supabase. Nenhum dado foi enviado.</p>
+                    <h3>Não foi possível validar o acesso</h3>
+                    <p>Atualize a página e tente novamente. Se o problema continuar, revise a configuração do Supabase.</p>
                   </>
-                ) : (
-                  <>
-                    <h3>Acesse para enviar documentos</h3>
-                    <p>O link de acesso cria uma sessão vinculada ao seu e-mail. Cada arquivo ficará em bucket privado, protegido por regras de acesso.</p>
-                    <div className="secure-access-form">
-                      <label className="field wide-field"><span>E-mail corporativo</span><input id="secure-access-email" type="email" value={emailToSignIn} onChange={(event) => setEmailToSignIn(event.target.value)} placeholder="voce@empresa.com.br" autoComplete="email" /></label>
-                      <button className="primary-action" type="button" onClick={() => void sendMagicLink()} disabled={authState === "working"}>{authState === "working" ? "Enviando link…" : authState === "done" ? "Link enviado" : "Enviar link seguro"}</button>
-                    </div>
-                  </>
-                )}
+                ) : null}
               </article>
             )}
 
@@ -927,7 +1029,9 @@ export function AnalysisDashboard() {
                 const categoryIsUploading = uploadState[category.id] === "working";
                 const categoryHasError = uploadState[category.id] === "error";
                 const hasDocuments = categorySources.length > 0;
-                const selectionLabel = hasDocuments ? "Atualizar documentos" : "Selecionar documentos";
+                const requirements = informationRequirements[category.id];
+                const requirementStates = requirements.map((requirement) => getRequirementState(categorySources, requirement));
+                const pendingRequirements = requirementStates.filter((state) => state === "missing").length;
 
                 return (
                   <article
@@ -935,16 +1039,6 @@ export function AnalysisDashboard() {
                     key={category.id}
                     data-testid={`upload-card-${category.id}`}
                   >
-                    <input
-                      id={`file-${category.id}`}
-                      type="file"
-                      multiple
-                      className="sr-only"
-                      accept={sourceUploadAccepts(category.id)}
-                      disabled={securityState !== "ready"}
-                      onChange={(event) => void handleInputUpload(category.id, event)}
-                      data-testid={`upload-input-${category.id}`}
-                    />
                     <div className="upload-topline">
                       <span className="upload-index">0{index + 1}</span>
                       <span className={`upload-state ${hasDocuments ? "is-loaded" : ""}`}>
@@ -959,18 +1053,41 @@ export function AnalysisDashboard() {
                       </div>
                     </div>
 
-                    <button
-                      className="upload-select-zone"
-                      type="button"
-                      onClick={() => openCategoryPicker(category.id)}
-                      aria-label={`${selectionLabel} em ${category.label}`}
-                    >
-                      <span className="upload-select-copy">
-                        <strong>{hasDocuments ? "Clique para atualizar este grupo" : "Clique para escolher os documentos"}</strong>
-                        <span>Selecione um ou vários arquivos desta categoria.</span>
-                      </span>
-                      <span className="upload-select-button">{securityState === "ready" ? selectionLabel : "Acessar para enviar"}</span>
-                    </button>
+                    <div className="information-checklist" aria-label={`Informações necessárias em ${category.label}`}>
+                      <div className="information-checklist-heading">
+                        <strong>Informações para análise completa</strong>
+                        <span>{pendingRequirements > 0 ? `${pendingRequirements} pendente${pendingRequirements === 1 ? "" : "s"}` : "conferir evidências"}</span>
+                      </div>
+                      {requirements.map((requirement, requirementIndex) => {
+                        const state = requirementStates[requirementIndex];
+                        const assignedCount = categorySources.filter((source) => source.requirementId === requirement.id).length;
+                        return (
+                          <div className={`information-requirement ${state}`} key={requirement.id}>
+                            <input
+                              id={`file-${category.id}-${requirement.id}`}
+                              type="file"
+                              multiple
+                              className="sr-only"
+                              accept={sourceUploadAccepts(category.id)}
+                              disabled={securityState !== "ready"}
+                              onChange={(event) => void handleInputUpload(category.id, requirement.id, event)}
+                              data-testid={`upload-input-${category.id}-${requirement.id}`}
+                            />
+                            <span className="information-requirement-mark" aria-hidden="true">{state === "identified" ? "✓" : state === "review" ? "?" : "•"}</span>
+                            <div>
+                              <strong>{requirement.label}</strong>
+                              <small>{requirement.detail}</small>
+                            </div>
+                            <div className="information-requirement-actions">
+                              <span className="information-requirement-state">{assignedCount > 0 ? `${assignedCount} arquivo${assignedCount === 1 ? "" : "s"}` : requirementStateLabel(state)}</span>
+                              <button type="button" onClick={() => openRequirementPicker(category.id, requirement.id)} disabled={securityState !== "ready"}>
+                                {assignedCount > 0 ? "Adicionar" : "Enviar arquivo"}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
 
                     <div className="upload-card-footer">
                       <span>{category.accepts.join(" · ")}</span>
